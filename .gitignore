@@ -1,0 +1,6 @@
+# The WebAssembly module, built with
+# GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o pdfo.wasm ./wasm
+*.wasm
+# Test binaries and profiles.
+*.test
+*.out
