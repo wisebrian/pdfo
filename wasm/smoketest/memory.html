@@ -1,0 +1,6 @@
+<!doctype html><meta charset="utf-8"><title>pdfo wasm memory test</title>
+<script>
+const w = new Worker("memory.js");
+w.onmessage = (e) => { fetch("/result?" + encodeURIComponent(JSON.stringify(e.data))); };
+w.onerror = (e) => { fetch("/result?" + encodeURIComponent(JSON.stringify([{name: "worker error", ok: false, detail: e.message}]))); };
+</script>
