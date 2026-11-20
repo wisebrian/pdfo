@@ -92,6 +92,8 @@ type Report struct {
 	InputEncrypted bool
 	// Warnings is never nil, so a UI can iterate it without a check.
 	Warnings []Warning
+	// Compression is set by Compress only.
+	Compression *CompressionReport
 }
 
 // Warning is something an operation dropped, changed or could not keep.

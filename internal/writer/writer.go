@@ -44,6 +44,15 @@ type entry struct {
 	obj    syntax.Object // the value of a non-stream object
 	dict   *syntax.Dict  // the dictionary of a stream
 	data   [][]byte      // the data of a stream, in order
+	body   Body          // or the data as a Body
+}
+
+// Body is stream data produced while the file is written, such as data
+// decrypted on the way: it knows its length in advance, which the layout
+// needs, and writes itself.
+type Body interface {
+	Len() int64
+	WriteTo(w io.Writer) (int64, error)
 }
 
 // New returns an empty Writer.
@@ -80,6 +89,16 @@ func (w *Writer) PutStream(r syntax.Ref, d *syntax.Dict, chunks ...[]byte) {
 		return
 	}
 	*e = entry{set: true, stream: true, dict: d, data: chunks}
+}
+
+// PutStreamBody sets an allocated object to a stream whose data body
+// writes when the file is written.
+func (w *Writer) PutStreamBody(r syntax.Ref, d *syntax.Dict, body Body) {
+	e := w.entry(r)
+	if e == nil {
+		return
+	}
+	*e = entry{set: true, stream: true, dict: d, body: body}
 }
 
 // Add allocates an object and sets its value.
@@ -348,13 +367,14 @@ type layout struct {
 
 type span struct {
 	ext      []byte // data referenced in place; nil for an arena span
-	off, end int    // the arena range, when ext is nil
+	body     Body   // or data written by a Body
+	off, end int    // the arena range, when ext and body are nil
 }
 
 func (l *layout) inline(b []byte) {
 	off := len(l.arena)
 	l.arena = append(l.arena, b...)
-	if n := len(l.spans); n > 0 && l.spans[n-1].ext == nil && l.spans[n-1].end == off {
+	if n := len(l.spans); n > 0 && l.spans[n-1].ext == nil && l.spans[n-1].body == nil && l.spans[n-1].end == off {
 		l.spans[n-1].end = len(l.arena)
 	} else {
 		l.spans = append(l.spans, span{off: off, end: len(l.arena)})
@@ -381,9 +401,12 @@ func (l *layout) object(num int, e *entry) {
 		l.inline(b)
 		return
 	}
-	var length int
+	var length int64
 	for _, c := range e.data {
-		length += len(c)
+		length += int64(len(c))
+	}
+	if e.body != nil {
+		length = e.body.Len()
 	}
 	d := e.dict.Clone()
 	d.Set("Length", syntax.Int(length))
@@ -395,6 +418,10 @@ func (l *layout) object(num int, e *entry) {
 	for _, c := range e.data {
 		l.external(c)
 	}
+	if e.body != nil {
+		l.spans = append(l.spans, span{body: e.body})
+		l.pos += e.body.Len()
+	}
 	l.inline([]byte("\nendstream\nendobj\n"))
 }
 
@@ -402,10 +429,13 @@ func (l *layout) object(num int, e *entry) {
 func (l *layout) file(final []byte) (*File, error) {
 	f := &File{final: final, size: l.pos + int64(len(final))}
 	for _, s := range l.spans {
-		if s.ext != nil {
-			f.parts = append(f.parts, s.ext)
-		} else {
-			f.parts = append(f.parts, l.arena[s.off:s.end])
+		switch {
+		case s.body != nil:
+			f.parts = append(f.parts, part{body: s.body})
+		case s.ext != nil:
+			f.parts = append(f.parts, part{data: s.ext})
+		default:
+			f.parts = append(f.parts, part{data: l.arena[s.off:s.end]})
 		}
 	}
 	// The identifier's two strings are the only hexadecimal strings in the
@@ -425,7 +455,7 @@ func (l *layout) file(final []byte) (*File, error) {
 
 // File is a laid-out PDF file, ready to be written.
 type File struct {
-	parts [][]byte
+	parts []part
 	final []byte // the trailer, or the cross-reference stream, holding the identifier
 	idAt  [2]int // where the identifier's two hexadecimal strings start in final
 	size  int64
@@ -439,10 +469,22 @@ func (f *File) Size() int64 { return f.size }
 // content alone; WriteTo can be called again and writes the same bytes.
 func (f *File) WriteTo(dst io.Writer) (int64, error) {
 	h := md5.New()
+	both := io.MultiWriter(dst, h)
 	var n int64
 	for _, p := range f.parts {
-		h.Write(p)
-		m, err := dst.Write(p)
+		if p.body != nil {
+			m, err := p.body.WriteTo(both)
+			n += m
+			if err != nil {
+				return n, err
+			}
+			if m != p.body.Len() {
+				return n, errors.New("writer: stream body wrote " + strconv.FormatInt(m, 10) + " bytes, not " + strconv.FormatInt(p.body.Len(), 10))
+			}
+			continue
+		}
+		h.Write(p.data)
+		m, err := dst.Write(p.data)
 		n += int64(m)
 		if err != nil {
 			return n, err
@@ -463,3 +505,9 @@ func (f *File) WriteTo(dst io.Writer) (int64, error) {
 }
 
 const hexDigit = "0123456789ABCDEF"
+
+// part is a piece of a File: bytes, or a Body.
+type part struct {
+	data []byte
+	body Body
+}

@@ -9,6 +9,10 @@
 # JPEG to imagesToPDF and prints how the WebAssembly memory grew:
 #
 #   wasm/smoketest/run.sh memory photo.jpg
+#
+# With "memory-pdf" and a large PDF, it rotates and extracts its pages:
+#
+#   wasm/smoketest/run.sh memory-pdf big.pdf
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
@@ -24,13 +28,21 @@ trap cleanup EXIT
 
 (cd "$root" && GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o "$dir/pdfo.wasm" ./wasm)
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" "$here/index.html" "$here/worker.js" \
-	"$here/memory.html" "$here/memory.js" "$dir/"
+	"$here/memory.html" "$here/memory.js" "$here/memory-pdf.html" "$here/memory-pdf.js" "$dir/"
 cp "$root/testdata/images/progressive.jpg" "$dir/photo.jpg"
+cp "$root/testdata/pdf/basic.pdf" "$root/testdata/pdf/lo-forms.pdf" "$dir/"
+cp "$root/testdata/pdf/enc-r6-aes-256-user.pdf" "$dir/locked.pdf"
 page=index.html
-if [ "${1:-}" = memory ]; then
+case "${1:-}" in
+memory)
 	cp "$2" "$dir/big.jpg"
 	page=memory.html
-fi
+	;;
+memory-pdf)
+	cp "$2" "$dir/big.pdf"
+	page=memory-pdf.html
+	;;
+esac
 
 chrome=""
 for c in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium chromium-browser; do

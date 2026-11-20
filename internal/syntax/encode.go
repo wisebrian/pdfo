@@ -25,14 +25,18 @@ const realDecimals = 6
 
 type encoder struct {
 	b []byte
+	// emptyName is set after the empty name "/", which ends in a delimiter
+	// yet would merge with a following number or keyword ("/0").
+	emptyName bool
 }
 
 // sep adds a space when the previous token and the next one would
 // otherwise run together: only two regular characters need one.
 func (e *encoder) sep(next byte) {
-	if n := len(e.b); n > 0 && isRegular(e.b[n-1]) && isRegular(next) {
+	if n := len(e.b); n > 0 && (isRegular(e.b[n-1]) || e.emptyName) && isRegular(next) {
 		e.b = append(e.b, ' ')
 	}
+	e.emptyName = false
 }
 
 func (e *encoder) object(o Object) {
@@ -55,6 +59,7 @@ func (e *encoder) object(o Object) {
 		e.b = AppendReal(e.b, float64(v))
 	case Name:
 		e.b = AppendName(e.b, v)
+		e.emptyName = v == ""
 	case String:
 		e.b = appendString(e.b, v)
 	case Array:
@@ -68,6 +73,7 @@ func (e *encoder) object(o Object) {
 		for i := range v.Len() {
 			k, x := v.At(i)
 			e.b = AppendName(e.b, k)
+			e.emptyName = k == ""
 			e.object(x)
 		}
 		e.b = append(e.b, ">>"...)

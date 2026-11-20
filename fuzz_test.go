@@ -54,3 +54,30 @@ func FuzzFromImages(f *testing.F) {
 		}
 	})
 }
+
+// FuzzCompress compresses arbitrary files with small limits; whatever
+// opens must compress without panicking, and the result must open again.
+func FuzzCompress(f *testing.F) {
+	f.Add(pdftest.Doc{Objects: []string{
+		"<</Type/Catalog/Pages 2 0 R>>",
+		"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+		pdftest.Page("/MediaBox[0 0 100 100]/Contents 4 0 R/Resources<</XObject<</I 5 0 R>>>>"),
+		pdftest.Stream("", []byte("q 100 0 0 100 0 0 cm /I Do Q"), false),
+		pdftest.Stream("/Type/XObject/Subtype/Image/Width 4/Height 4/ColorSpace/DeviceGray/BitsPerComponent 8", make([]byte, 16), true),
+	}}.Bytes())
+	f.Fuzz(func(t *testing.T, data []byte) {
+		pdftest.Bounded(t, len(data), func() {
+			d, err := Open(data, &OpenOptions{Limits: Limits{MaxStreamSize: 1 << 20, MaxDecoded: 8 << 20, MaxImagePixels: 1 << 16}})
+			if err != nil {
+				return
+			}
+			out, err := Compress(d, &Screen)
+			if err != nil {
+				return
+			}
+			if _, err := Open(out.Bytes(), nil); err != nil {
+				t.Fatalf("compressed file does not open: %v", err)
+			}
+		})
+	})
+}

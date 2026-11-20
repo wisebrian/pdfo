@@ -34,6 +34,9 @@ type Error struct {
 	Index int
 	// Option is the name of the offending option, or "".
 	Option string
+	// Pos is, for a page selection, the byte offset of the bad item; -1
+	// otherwise.
+	Pos int
 }
 
 // Object returns the error as the JavaScript object a call returns:
@@ -46,20 +49,31 @@ func (e Error) Object() map[string]any {
 	if e.Option != "" {
 		m["option"] = e.Option
 	}
+	if e.Pos >= 0 {
+		m["pos"] = e.Pos
+	}
 	return m
 }
 
 // ErrorOf classifies err for JavaScript.
 func ErrorOf(err error) Error {
-	e := Error{Message: err.Error(), Code: "internal", Index: -1}
+	e := Error{Message: err.Error(), Code: "internal", Index: -1, Pos: -1}
 	var (
 		ae *ArgError
 		oe *pdfo.OptionError
 		le *pdfo.LimitError
 		fe *pdfo.FormatError
 		ie *pdfo.ImageError
+		pe *pdfo.PageRangeError
+		in *InputError
 	)
 	switch {
+	case errors.Is(err, pdfo.ErrPasswordRequired):
+		e.Code = "password-required"
+	case errors.Is(err, pdfo.ErrWrongPassword):
+		e.Code = "wrong-password"
+	case errors.As(err, &pe):
+		e.Code, e.Option, e.Pos = "bad-argument", "pages", pe.Pos
 	case errors.As(err, &ae):
 		e.Code = "bad-argument"
 	case errors.As(err, &oe):
@@ -74,13 +88,16 @@ func ErrorOf(err error) Error {
 	if errors.As(err, &ie) {
 		e.Index = ie.Index
 	}
+	if errors.As(err, &in) {
+		e.Index = in.Index
+	}
 	return e
 }
 
 // Panic turns a recovered panic into an error for JavaScript. The page
 // keeps working: the panic was caught before it could end the Go program.
 func Panic(r any) Error {
-	return Error{Message: fmt.Sprintf("pdfo: internal error: %v", r), Code: "internal", Index: -1}
+	return Error{Message: fmt.Sprintf("pdfo: internal error: %v", r), Code: "internal", Index: -1, Pos: -1}
 }
 
 // optionName converts a Go option name to the JavaScript one ("PageSize"
@@ -236,17 +253,57 @@ func ParseImageOptions(data []byte) (*pdfo.ImageOptions, error) {
 // ReportJSON encodes a report for JavaScript to JSON.parse:
 //
 //	{"pages": 3, "inputEncrypted": true, "warnings": [
-//	  {"code": "...", "message": "...", "count": 2, "pages": [1, 3]}]}
+//	  {"code": "...", "message": "...", "count": 2, "pages": [1, 3]}],
+//	 "compression": {"sizeBefore": 1000, "sizeAfter": 500, "images": [
+//	  {"page": 1, "width": 2000, "height": 1500, "dpi": 181,
+//	   "bytesBefore": 800, "bytesAfter": 300, "action": "downsampled", "reason": ""}]}}
 //
-// inputEncrypted, count and pages appear only when they say something.
+// inputEncrypted, count and pages appear only when they say something;
+// compression only for compress.
 func ReportJSON(r pdfo.Report) string {
 	b := []byte(`{"pages":`)
 	b = strconv.AppendInt(b, int64(r.Pages), 10)
 	if r.InputEncrypted {
 		b = append(b, `,"inputEncrypted":true`...)
 	}
-	b = append(b, `,"warnings":[`...)
-	for i, w := range r.Warnings {
+	b = append(b, `,"warnings":`...)
+	b = appendWarnings(b, r.Warnings)
+	if c := r.Compression; c != nil {
+		b = append(b, `,"compression":{"sizeBefore":`...)
+		b = strconv.AppendInt(b, c.SizeBefore, 10)
+		b = append(b, `,"sizeAfter":`...)
+		b = strconv.AppendInt(b, c.SizeAfter, 10)
+		b = append(b, `,"images":[`...)
+		for i, im := range c.Images {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = append(b, `{"page":`...)
+			b = strconv.AppendInt(b, int64(im.Page), 10)
+			b = append(b, `,"width":`...)
+			b = strconv.AppendInt(b, int64(im.Width), 10)
+			b = append(b, `,"height":`...)
+			b = strconv.AppendInt(b, int64(im.Height), 10)
+			b = append(b, `,"dpi":`...)
+			b = appendNumber(b, im.DPI)
+			b = append(b, `,"bytesBefore":`...)
+			b = strconv.AppendInt(b, im.BytesBefore, 10)
+			b = append(b, `,"bytesAfter":`...)
+			b = strconv.AppendInt(b, im.BytesAfter, 10)
+			b = append(b, `,"action":`...)
+			b = appendJSONString(b, im.Action)
+			b = append(b, `,"reason":`...)
+			b = appendJSONString(b, im.Reason)
+			b = append(b, '}')
+		}
+		b = append(b, "]}"...)
+	}
+	return string(append(b, '}'))
+}
+
+func appendWarnings(b []byte, ws []pdfo.Warning) []byte {
+	b = append(b, '[')
+	for i, w := range ws {
 		if i > 0 {
 			b = append(b, ',')
 		}
@@ -270,5 +327,5 @@ func ReportJSON(r pdfo.Report) string {
 		}
 		b = append(b, '}')
 	}
-	return string(append(b, "]}"...))
+	return append(b, ']')
 }

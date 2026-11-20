@@ -42,7 +42,10 @@ type Ref struct {
 // indirect object; it never appears inside another object.
 type Stream struct {
 	Dict *Dict  // the stream dictionary
-	Data []byte // the stored bytes, still encoded
+	Data []byte // the stored bytes, still encoded (and encrypted)
+	// Ref is the indirect object that holds the stream, which an encrypted
+	// file needs to derive the stream's key; zero for new streams.
+	Ref Ref
 }
 
 func (Bool) isObject()    {}
@@ -65,7 +68,14 @@ func (r Ref) IsZero() bool { return r == Ref{} }
 type Dict struct {
 	keys []Name
 	vals []Object
+	// index maps keys to positions once a dictionary grows past
+	// indexAfter entries. Real dictionaries are small and searched faster
+	// without it, but a hostile file can hold one with millions of keys,
+	// which a linear search would turn into a quadratic parse.
+	index map[Name]int
 }
+
+const indexAfter = 16
 
 // Len returns the number of entries.
 func (d *Dict) Len() int {
@@ -78,17 +88,28 @@ func (d *Dict) Len() int {
 // At returns the i-th entry, for iterating in order without allocating.
 func (d *Dict) At(i int) (Name, Object) { return d.keys[i], d.vals[i] }
 
-// Get returns the value for k, or nil when k is absent. Lookup is linear:
-// dictionaries in real files are small, and a slice keeps their order
-// without the cost of an index.
+func (d *Dict) find(k Name) int {
+	if d.index != nil {
+		if i, ok := d.index[k]; ok {
+			return i
+		}
+		return -1
+	}
+	for i, key := range d.keys {
+		if key == k {
+			return i
+		}
+	}
+	return -1
+}
+
+// Get returns the value for k, or nil when k is absent.
 func (d *Dict) Get(k Name) Object {
 	if d == nil {
 		return nil
 	}
-	for i, key := range d.keys {
-		if key == k {
-			return d.vals[i]
-		}
+	if i := d.find(k); i >= 0 {
+		return d.vals[i]
 	}
 	return nil
 }
@@ -96,35 +117,49 @@ func (d *Dict) Get(k Name) Object {
 // Set sets k to v, keeping k's position if it is already present. Setting nil
 // deletes k, since a null value and an absent key mean the same thing.
 func (d *Dict) Set(k Name, v Object) {
-	for i, key := range d.keys {
-		if key == k {
-			if v == nil {
-				d.delete(i)
-			} else {
-				d.vals[i] = v
-			}
-			return
+	if i := d.find(k); i >= 0 {
+		if v == nil {
+			d.delete(i)
+		} else {
+			d.vals[i] = v
 		}
+		return
 	}
-	if v != nil {
-		d.keys = append(d.keys, k)
-		d.vals = append(d.vals, v)
+	if v == nil {
+		return
+	}
+	d.keys = append(d.keys, k)
+	d.vals = append(d.vals, v)
+	switch {
+	case d.index != nil:
+		d.index[k] = len(d.keys) - 1
+	case len(d.keys) > indexAfter:
+		d.index = make(map[Name]int, len(d.keys))
+		for i, key := range d.keys {
+			d.index[key] = i
+		}
 	}
 }
 
 // Delete removes k if it is present.
 func (d *Dict) Delete(k Name) {
-	for i, key := range d.keys {
-		if key == k {
-			d.delete(i)
-			return
-		}
+	if i := d.find(k); i >= 0 {
+		d.delete(i)
 	}
 }
 
 func (d *Dict) delete(i int) {
 	d.keys = append(d.keys[:i], d.keys[i+1:]...)
 	d.vals = append(d.vals[:i], d.vals[i+1:]...)
+	if d.index != nil {
+		d.index = nil
+		if len(d.keys) > indexAfter {
+			d.index = make(map[Name]int, len(d.keys))
+			for j, key := range d.keys {
+				d.index[key] = j
+			}
+		}
+	}
 }
 
 // Clone returns a shallow copy, so a caller can change entries without
@@ -133,8 +168,15 @@ func (d *Dict) Clone() *Dict {
 	if d == nil {
 		return &Dict{}
 	}
-	return &Dict{
+	c := &Dict{
 		keys: append([]Name(nil), d.keys...),
 		vals: append([]Object(nil), d.vals...),
 	}
+	if d.index != nil {
+		c.index = make(map[Name]int, len(d.keys))
+		for i, key := range c.keys {
+			c.index[key] = i
+		}
+	}
+	return c
 }

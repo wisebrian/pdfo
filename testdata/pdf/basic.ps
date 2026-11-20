@@ -1,0 +1,51 @@
+%!PS
+% Three pages for the reader and page-action tests: A4 portrait, Letter
+% turned 90 degrees, A5 landscape. Each shows its number large, a border
+% and a filled corner, so position, size and rotation can be checked in a
+% rendering. The pdfmarks add bookmarks, links, a named destination, a
+% note, an attachment and an OpenAction script. make.sh turns page two by
+% 90 degrees with qpdf.
+
+/big { /Helvetica-Bold findfont 72 scalefont setfont } def
+/small { /Helvetica findfont 14 scalefont setfont } def
+/frame { % w h
+  /h exch def /w exch def
+  0.2 0.3 0.8 setrgbcolor 4 setlinewidth 10 10 w 20 sub h 20 sub rectstroke
+  0.9 0.2 0.2 setrgbcolor 10 10 60 60 rectfill
+} def
+
+[ /Title (pdfo test document) /Author (pdfo) /Subject (reader tests) /DOCINFO pdfmark
+[ /Name (pdfo-note.txt) /FS << /Type /Filespec /F (pdfo-note.txt) /EF << /F [ /_objdef {att} /type /stream /OBJ pdfmark [ {att} (attached text\n) /PUT pdfmark [ {att} << /Type /EmbeddedFile >> /PUT pdfmark {att} >> >> /EMBED pdfmark
+[ /_objdef {js} /type /dict /OBJ pdfmark
+[ {js} << /S /JavaScript /JS (app.alert\('pdfo test'\);) >> /PUT pdfmark
+[ {Catalog} << /OpenAction {js} >> /PUT pdfmark
+
+% Page 1: A4
+<< /PageSize [595 842] >> setpagedevice
+595 842 frame
+big 0 setgray 250 400 moveto (1) show
+small 72 760 moveto (Page one: A4. Link to page three below.) show
+[ /Dest /chapter3 /Rect [72 700 300 730] /Border [0 0 1] /Color [0 0 1] /Subtype /Link /ANN pdfmark
+[ /Rect [72 650 300 680] /Border [0 0 1] /Action << /S /URI /URI (https://example.com/) >> /Subtype /Link /ANN pdfmark
+[ /Rect [350 650 380 680] /Contents (A note on page one) /Open false /Subtype /Text /ANN pdfmark
+[ /Title (Chapter 1) /Page 1 /View [/XYZ 0 842 null] /Count 1 /OUT pdfmark
+[ /Title (Section 1.1) /Page 1 /View [/FitH 600] /OUT pdfmark
+showpage
+
+% Page 2: Letter, turned
+<< /PageSize [612 792] >> setpagedevice
+612 792 frame
+big 0 setgray 260 380 moveto (2) show
+small 72 720 moveto (Page two: Letter, rotated 90.) show
+[ /Rect [72 600 300 630] /Border [0 0 1] /Page 1 /View [/XYZ 0 842 null] /Subtype /Link /ANN pdfmark
+[ /Title (Chapter 2) /Page 2 /View [/Fit] /OUT pdfmark
+showpage
+
+% Page 3: A5 landscape
+<< /PageSize [595 420] >> setpagedevice
+595 420 frame
+big 0 setgray 260 180 moveto (3) show
+small 72 360 moveto (Page three: A5 landscape.) show
+[ /Dest /chapter3 /View [/XYZ 0 420 null] /DEST pdfmark
+[ /Title (Chapter 3) /Page 3 /View [/XYZ 0 420 null] /OUT pdfmark
+showpage

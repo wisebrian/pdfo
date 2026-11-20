@@ -183,7 +183,7 @@ func TestLargeStreamDataIsNotCopied(t *testing.T) {
 	}
 	shared := false
 	for _, p := range f.parts {
-		if len(p) > 0 && &p[0] == &big[0] {
+		if len(p.data) > 0 && &p.data[0] == &big[0] {
 			shared = true
 		}
 	}
